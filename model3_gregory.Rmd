@@ -1,0 +1,124 @@
+---
+title: "Final Project — Model 3"
+author: "Gregory Turpanjian"
+subtitle: MGSC 310 Problem Set Template
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+---
+
+```{r setup, include=FALSE}
+
+# Please leave this code chunk as is. It makes some slight formatting changes to alter the output to be more aesthetically pleasing. 
+
+library(knitr)
+
+# Change the number in set seed to your own favorite number
+set.seed(1818)
+options(width=70)
+options(scipen=99)
+
+
+# this sets text outputted in code chunks to small
+opts_chunk$set(tidy.opts=list(width.wrap=50),tidy=TRUE, size = "vsmall")  
+opts_chunk$set(message = FALSE,                                          
+               warning = FALSE,
+               # "caching" stores objects in code chunks and only rewrites if you change things
+               cache = FALSE,                               
+               # automatically downloads dependency files
+               autodep = TRUE,
+               # 
+               cache.comments = FALSE,
+               # 
+               collapse = TRUE,
+               # change fig.width and fig.height to change the code height and width by default
+               fig.width = 5.5,  
+               fig.height = 4.5,
+               fig.align='center')
+
+
+```
+
+```{r setup-2}
+
+# Always print this out before your assignment
+sessionInfo()
+getwd()
+
+```
+
+```{r}
+
+set.seed(1234)
+
+library("tidyverse")
+library("readr")
+library("dplyr")
+library("forcats")
+library("rsample")
+library("glmnet")
+library("glmnetUtils")
+
+apartments <- read_delim("final_project/apartments_for_rent_classified_10K.csv", delim = ";")
+
+apartments_clean <- apartments %>% 
+                      mutate(bathrooms = as.numeric(bathrooms),
+                             bedrooms = as.numeric(bedrooms),
+                             pets_allowed = factor(pets_allowed),
+                             latitude = as.numeric(latitude),
+                             longitude = as.numeric(longitude)) %>% 
+                      filter(bedrooms > 0,
+                             amenities != "null") %>% 
+                      drop_na(bathrooms)
+                             
+amenities_list <- strsplit(apartments_clean$amenities,",")
+lvl <- unique(unlist(amenities_list))      
+amenities <- data.frame(id = apartments_clean$id,
+                      do.call(rbind, lapply(amenities_list, function(x) table(factor(x, levels = lvl)))), 
+                                                stringsAsFactors = FALSE)
+
+apartments_clean <- full_join(x = apartments_clean,
+                              y = amenities,
+                              by = "id")
+
+income <- read_csv("final_project/archive/kaggle_income.csv")
+
+income_clean <- income %>% 
+  group_by(state, cityname) %>% 
+  summarize(across(where(is.numeric), mean))
+
+apartments_clean <- left_join(x = apartments_clean,
+                              y = income_clean,
+                              by = c("state", "cityname"))
+                     
+apartments_clean <- apartments_clean %>% drop_na(mean_household_income) %>% 
+                      filter(mean_household_income > 0)
+
+apartments_split <- initial_split(apartments_clean, prop = 0.75)
+apartments_train <- training(apartments_split)
+apartments_test <- testing(apartments_split)
+
+
+lasso_fit <- cv.glmnet(price ~ .,
+                       data = apartments_train %>% select(-id, -category, -title, -body, -amenities, -currency,
+                                                          -fee, -has_photo, -price_display, -price_type, -address,
+                                                          -cityname, -state, -source, -time,
+                                                          -pets_allowed, -Dishwasher, -Alarm, -Washer.Dryer,
+                                                          -Garbage.Disposal, -Refrigerator, -Luxury, -Wood.Floors,
+                                                          -Internet.Access, -Cable.or.Satellite, -latitude, -longitude),
+                       alpha = 1)
+
+print(lasso_fit$lambda.min)
+
+coef(lasso_fit, s = lasso_fit$lambda.min) %>% round(3)
+
+plot(lasso_fit)
+
+devtools::install_github("jaredlander/coefplot")
+library('coefplot')
+coefpath(lasso_fit)
+
+```
+
+

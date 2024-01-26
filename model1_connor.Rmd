@@ -1,0 +1,200 @@
+---
+title: "Final Project"
+author: "Connor Blumenthal"
+subtitle: MGSC 310 
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+---
+
+```{r setup, include=FALSE}
+
+# Please leave this code chunk as is. It makes some slight formatting changes to alter the output to be more aesthetically pleasing. 
+
+library(knitr)
+
+# Change the number in set seed to your own favorite number
+set.seed(2024)
+options(width=70)
+options(scipen=99)
+
+
+# this sets text outputted in code chunks to small
+opts_chunk$set(tidy.opts=list(width.wrap=50),tidy=TRUE, size = "vsmall")  
+opts_chunk$set(message = FALSE,                                          
+               warning = FALSE,
+               # "caching" stores objects in code chunks and only rewrites if you change things
+               cache = FALSE,                               
+               # automatically downloads dependency files
+               autodep = TRUE,
+               # 
+               cache.comments = FALSE,
+               # 
+               collapse = TRUE,
+               # change fig.width and fig.height to change the code height and width by default
+               fig.width = 5.5,  
+               fig.height = 4.5,
+               fig.align='center')
+
+```
+
+```{r setup-2}
+sessionInfo()
+getwd()
+```
+
+```{r}
+library("tidyverse")
+library('ggplot2')
+library('glmnet')
+library('glmnetUtils')
+library('dplyr')
+library('ggrepel')
+library('rsample')
+library('leaflet')
+library('sf')
+library('tidyverse')
+library('titanic')
+library('randomForest')
+library('rsample')
+library('randomForestExplainer')
+```
+### Import and clean the data
+```{r}
+#Import the data
+data <- read_delim("/users/connor/desktop/  /MGSC 310/datasets/apartments_for_rent_classified_10K.csv", delim = ";")
+
+#Clean the data
+data_clean <- data %>% 
+                      mutate(bathrooms = as.numeric(bathrooms),
+                             bedrooms = as.numeric(bedrooms),
+                             pets_allowed = factor(pets_allowed),
+                             latitude = as.numeric(latitude),
+                             longitude = as.numeric(longitude))
+
+#Remove other observations   
+categories_to_remove <- c("housing/rent/home", "housing/rent/short_term","Monthly|Weekly","Weekly")
+
+data_clean <- subset(data_clean, !(category %in% categories_to_remove) & !(price_type %in% categories_to_remove))
+
+data_clean <- subset(data_clean, square_feet != 40000)
+
+#Creating training and testing set
+data_split <- initial_split(data_clean, prop = .8)
+data_train <- training(data_split)
+data_test <- testing(data_split)
+
+
+```
+
+### Models Used
+```{r}
+#Linear Model
+model <- lm(square_feet ~ bedrooms + bathrooms + price, data = data_train)
+
+#Lasso Model
+lasso_mod <- cv.glmnet(square_feet ~ bedrooms + bathrooms + price, 
+                       data = data_train,
+                       alpha = 1)
+```
+
+### Summary of Models
+```{r}
+#Linear Model
+summary(model)
+
+#Lasso Model plot
+plot(lasso_mod)
+
+```
+
+### Predicting Lambda 1se
+```{r}
+coef(lasso_mod, 
+     s = lasso_mod$lambda.1se) %>% 
+  round(3)
+```
+
+### Plotting the effect of bathrooms, bedrooms, and price on sqft
+```{r}
+#Plotting the effect of bathrooms on sqft
+data_clean1 <- na.omit(data_clean[, c("bathrooms", "square_feet")])
+
+#Create a bar graph
+ggplot(data_clean1, aes(x = as.factor(bathrooms), y = square_feet)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "blue") +
+  labs(title = "Comparison of Bathrooms and Square Footage",
+       x = "Number of Bathrooms", y = "Square Footage") +
+  theme_minimal()
+#Plotting the effect of bedrooms on sqft
+ggplot(data_clean, aes(x = as.factor(bedrooms), y = square_feet)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "red") +
+  labs(title = "Comparison of Bedrooms and Square Footage",
+       x = "Number of Bedrooms", y = "Square Footage") +
+  theme_minimal()
+#Plotting the effect of price of sqft
+ggplot(data_clean, aes(x = as.factor(price), y = square_feet)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "red") +
+  labs(title = "Comparison of Price and Square Footage",
+       x = "Price", y = "Square Footage") +
+  theme_minimal() +
+  scale_x_discrete(breaks = c(0, 1000, 1500, 2000, 2500, 3000))
+```
+
+### Testing the model
+```{r}
+predictions <- predict(model, newdata = data_test)
+
+# Create a data frame with actual and predicted values
+results <- data.frame(Actual = data_test$square_feet, Predicted = predictions)
+
+# Create a scatter plot
+library(ggplot2)
+
+ggplot(results, aes(x = Actual, y = Predicted)) +
+  geom_point(color = "blue", size = 3) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +  # Reference line for perfect predictions
+  labs(title = "Actual vs Predicted Square Footage",
+       x = "Actual Square Footage", y = "Predicted Square Footage") +
+  theme_minimal()
+```
+
+### Additional datapoints and graphs
+```{r}
+mean(data_clean$bedrooms, na.rm = TRUE)
+mean(data_clean$bathrooms, na.rm = TRUE)
+mean(data_clean$price, na.rm = TRUE)
+
+# Remove rows with missing values in relevant columns
+data_clean <- na.omit(data_clean[, c("cityname", "price", "latitude", "longitude")])
+
+# Create an sf data frame
+sf_data <- st_as_sf(data_clean, coords = c("longitude", "latitude"), crs = 4326)
+
+# Define breaks and labels for legend
+breaks <- seq(min(sf_data$price), max(sf_data$price), length.out = 6)
+labels <- seq(min(sf_data$price), max(sf_data$price), length.out = 6)
+
+# Create a leaflet map
+map <- leaflet(sf_data) %>%
+  addTiles() %>%
+  addCircleMarkers(
+    radius = 5,
+    color = ~colorFactor("Blues", sf_data$price),
+    fillColor = ~colorFactor("Blues", sf_data$price),
+    fillOpacity = 0.7,
+    popup = ~paste(cityname, "<br>Price: $", price)
+  )
+ 
+print(map)
+
+exp(model$coefficients)
+
+
+```
+
+
+ 
+ 
+ 
